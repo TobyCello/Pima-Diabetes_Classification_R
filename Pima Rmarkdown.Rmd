@@ -1,0 +1,299 @@
+---
+title: "Project Pima Diabetes_Automatic Learning"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list=ls())
+library(mlbench)
+data(PimaIndiansDiabetes)
+head(PimaIndiansDiabetes)
+summary(PimaIndiansDiabetes)
+# transfor to binary response
+PimaIndiansDiabetes$diabetes<-as.numeric(PimaIndiansDiabetes$diabetes)-1
+```
+
+## Missing Values:
+```{r}
+length(PimaIndiansDiabetes$insulin[which(PimaIndiansDiabetes$insulin==0)])
+```
+From common sense, we know Insulin must have something to do with Diabetes, so even we have 374 out of 768 missing Insulin data, we cannot delete Insulin variable. For data accuracy, we could not compute missing value as mean of total neither. So we decide to delete all missing value rows. 
+```{r}
+cor(as.numeric(PimaIndiansDiabetes$diabetes),PimaIndiansDiabetes$insulin)
+```
+```{r}
+PimaIndiansDiabetes<-PimaIndiansDiabetes[!as.logical(rowSums(PimaIndiansDiabetes[,2:8]==0)), ]
+cor(as.numeric(PimaIndiansDiabetes$diabetes),PimaIndiansDiabetes$insulin)
+```
+We can see significant increase in correlation between Insluin and Diabetes.
+
+
+##Bagging
+```{r}
+library(randomForest)
+library(ISLR)
+rawdata<-PimaIndiansDiabetes
+attach(rawdata)
+B <- 5000
+n <- nrow(rawdata);  p <- ncol(rawdata)-1    # No. of observations (n) and predictors (p).
+
+set.seed(1)
+train <- sample(n,0.8*n+1)
+
+rawdata.test <- subset(rawdata[-train,], select=-diabetes)
+diabetes.test <- rawdata$diabetes[-train]
+
+set.seed(1)
+bag.model <- randomForest(as.factor(diabetes) ~ ., data=rawdata,
+                         subset=train,
+                         xtest = rawdata.test, ytest =as.factor(diabetes.test),
+                         ntree=B, 
+                         mtry=p, 
+                         importance=T)
+bag.model
+```
+
+
+## Random Foreast
+```{r cars}
+library(randomForest)
+library(ISLR)
+rawdata<-PimaIndiansDiabetes
+attach(rawdata)
+B <- 5000
+n <- nrow(rawdata);  p <- ncol(rawdata)-1    # No. of observations (n) and predictors (p).
+
+set.seed(1)
+train <- sample(n,0.8*n+1)
+
+rawdata.test <- subset(rawdata[-train,], select=-diabetes)
+diabetes.test <- rawdata$diabetes[-train]
+
+set.seed(1)
+rf.model <- randomForest(as.factor(diabetes) ~ ., data=rawdata,
+                         subset=train,
+                         xtest = rawdata.test, ytest =as.factor(diabetes.test),
+                         ntree=B, 
+                         mtry=sqrt(p), 
+                         importance=T)
+rf.model
+```
+Random Forest Test set error rate is 23.08%, among 30 true diabetes, only 16 got tested, detect rate is 1-0.467=0.533. Notice 23.08% is lower than 25.64% for bagging tree. But not such a difference. And for OOB they are pretty much same.
+```{r}
+subset(rawdata[-train,])[-which(rf.model$test$predicted==diabetes.test),] # wrong predicted results
+```
+
+## Improve RF performance
+```{r}
+set.seed(1)
+all.err <- NULL
+for (mtry in c(p/2,p/3,sqrt(p))){
+  set.seed(1)
+  rf.model <- randomForest(as.factor(diabetes) ~ ., data=rawdata,
+                           subset=train,
+                           xtest = rawdata.test, ytest =as.factor(diabetes.test),
+                           ntree=5000, 
+                           mtry=mtry, 
+                           importance=T)
+  all.err <- cbind(all.err, rf.model$test$err.rate[,1])
+}
+# Plot the test error rate progressions for baggin and two random forest versions.
+matplot(all.err, type="l", ylim=c(0.2,0.35),
+        ylab="Test Classification Error", xlab="B",
+        main="Test Classification Error for different 'mtry' values.",
+        col=c(1,2,4))
+
+legend("topright",
+       lty=c(1,2,4),
+       col=c(1,2,4),
+       legend=c("m=p/2","m = p/3", 
+                "m=sqrt(p)"))
+```
+As we can see, doesn't matter how we set mtry, they all converge to 23.08%
+
+#Tune Mtry
+```{r}
+library(caret)
+# Create model with default paramters
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+metric <- "Accuracy"
+set.seed(1)
+mtry <- sqrt(p)
+tunegrid <- expand.grid(.mtry=mtry)
+rf_default <- train(as.factor(diabetes)~., data=rawdata, method="rf", metric=metric, tuneGrid=tunegrid, trControl=control)
+print(rf_default)
+# sqrt(p)
+  # Accuracy   Kappa    
+  # 0.7858974  0.5000359
+# Random Search
+control <- trainControl(method="repeatedcv", number=10, repeats=3, search="random")
+set.seed(1)
+mtry <- sqrt(p)
+rf_random <- train(as.factor(diabetes)~., data=rawdata, method="rf", metric=metric, tuneLength=15, trControl=control)
+print(rf_random)
+plot(rf_random)
+  # mtry  Accuracy   Kappa    
+  # 1     0.7740171  0.4646896
+  # 2     0.7824786  0.4907644
+  # 3     0.7875855  0.5038099 #Best mtry
+  # 4     0.7858761  0.5000548
+  # 5     0.7858761  0.5012933
+  # 6     0.7850855  0.4986744
+  # 7     0.7774359  0.4790418
+  # 8     0.7782692  0.4875309
+# Grid Search
+control <- trainControl(method="repeatedcv", number=10, repeats=3, search="grid")
+set.seed(1)
+tunegrid <- expand.grid(.mtry=c(1:p))
+rf_gridsearch <- train(as.factor(diabetes)~., data=rawdata, method="rf", metric=metric, tuneGrid=tunegrid, trControl=control)
+print(rf_gridsearch)
+plot(rf_gridsearch)
+  # mtry  Accuracy   Kappa    
+  # 1     0.7773932  0.4670298
+  # 2     0.7841453  0.4941200
+  # 3     0.7884402  0.5059865 #Best mtry
+  # 4     0.7867521  0.5035276
+  # 5     0.7808120  0.4883607
+  # 6     0.7774145  0.4784565
+  # 7     0.7765812  0.4778307
+  # 8     0.7757051  0.4760643
+```
+Stick with sqrt(p), as sqrt(p=8)=2.83~3
+
+## Variable importance
+```{r}
+varImpPlot(rf.model)
+```
+
+As it's classification question, we use Gini for final results. Variable importance rank as Top 3 Glucose, Insulin, Age. But notice Age, Pedigree, Mass they are very close. To further analyst variable, we take a step back to correlation matrix.
+
+## Variable Correlation:
+```{r}
+# flattenCorrMatrix, make matrix to column cor(a,b)
+# cormat : matrix of the correlation coefficients
+# pmat : matrix of the correlation p-values
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+library(Hmisc)
+res<-cor(PimaIndiansDiabetes)
+res2<-rcorr(as.matrix(PimaIndiansDiabetes[,1:9]))
+corfla<-flattenCorrMatrix(res2$r, res2$P)
+```
+visualize the correlation matrix
+```{r}
+
+corfla[which.max(abs(corfla$cor)),] #max abs(cor)=0.6796
+corfla[which.min(abs(corfla$cor)),] #min abs(cor)=0.0076
+#plot corrlation matrix
+#install.packages("corrplot")
+library(corrplot)
+# corrplot(res, type = "upper", order = "hclust", 
+#          tl.col = "black", tl.srt = 45)
+# Insignificant correlations are leaved blank
+corrplot(res2$r, type="upper", order="hclust", 
+         p.mat = res2$P, sig.level = 0.01, insig = "blank")
+# correlation paris and number
+library("PerformanceAnalytics")
+chart.Correlation(PimaIndiansDiabetes, histogram=TRUE, pch=19)
+
+```
+
+Notice how predictors have interactions between each others. 
+Though Random Forest supposed to decorrelate and offset the effect of dominating predictors on response, we might need further decorrelation approach.
+
+##PCA
+```{r}
+set.seed(1)
+train <- sample(n,0.8*n+1)
+rawdata.test <- subset(rawdata[-train,], select=-diabetes)
+#run PCA on train
+rawdata.train.s<-prcomp(rawdata[train,c(1:8)], retx=TRUE, center=TRUE, scale.=TRUE)
+# Importance of components: same as summary Cumulative Proportion 
+expl.var <- round(rawdata.train.s$sdev^2/sum(rawdata.train.s$sdev^2)*100)
+summary(rawdata.train.s)
+screeplot(rawdata.train.s,type="l") # keep PC1, PC2, PC3, PC4, PC5,PC6
+```
+
+Use only PC1 to PC6 for new predictors
+Extract PCs and apply on test set
+```{r}
+train.data<-data.frame(diabetes=rawdata[train,]$diabetes,rawdata.train.s$x)
+head(train.data,5)
+test.data<-predict(rawdata.train.s,newdata=rawdata[-train,1:8])
+test.data<-data.frame(diabetes=rawdata[-train,]$diabetes,test.data)
+```
+Based on the new predictors, run a random forest tree.
+```{r}
+library(randomForest)
+library(ISLR)
+set.seed(1)
+rf.model.pca <- randomForest(as.factor(train.data$diabetes) ~ .,
+                         data=train.data,
+                         xtest = test.data[-diabetes], ytest =as.factor(test.data$diabetes),
+                         ntree=B, 
+                         mtry=sqrt(8), 
+                         importance=T)
+rf.model.pca
+```
+Notice the positive diabetes prediction accuracy decreased from 0.533 to 0.467. And the OOB error rate incrased from 22.29% to 24.84% if we only retain the first 6 PCs.
+Try use all 8 PCs, we have positive diabetes prediction accuracy same as previous random forest with no PCA transformation. And better negtive diabetes prediciton accuracy. So best test set performance is random foreast with full PCA predictors. 
+
+## It's hard to inteprete variable importance with PCA
+## Variable importance
+```{r}
+varImpPlot(rf.model.pca)
+```
+Most important variable is PC1, and the rest is very close.
+
+Refer from : https://rpubs.com/njvijay/27823
+```{r}
+library(ggplot2)
+library(plyr)
+library(scales)
+library(grid)
+library(devtools)
+library(ggbiplot)
+g <- ggbiplot(rawdata.train.s, obs.scale = 1, var.scale = 1,
+              ellipse = TRUE, 
+              circle = TRUE)
+g <- g + scale_color_discrete(name = '')
+g <- g + theme(legend.direction = 'horizontal', 
+               legend.position = 'top')
+print(g)
+```
+
+```{r}
+# install_github("vqv/ggbiplot")
+library(ggplot2)
+library(plyr)
+library(scales)
+library(grid)
+library(devtools)
+library(ggbiplot)
+g <- ggbiplot(rawdata.train.s,scale = 0, var.scale = 0, labels=as.factor(train.data$diabetes),groups = as.factor(train.data$diabetes),ellipse = TRUE, circle = TRUE)
+g <- g + scale_color_discrete(name = '')
+g <- g + theme(legend.direction = 'horizontal', 
+               legend.position = 'top')
+print(g)
+```
+```{r}
+rawdata.train.s$rotation[,1:2]
+```
+From the plot as wells from the above loadings what we can understand is, first loading vector places approximately equal weight on triceps, mass, insulin, glucose, pressure, slightly less weight on age and pedigree, much more less weight on pregnant. Hence this component roughly corresponds to a measure of overall health condition.
+
+The second loading vector places most of it weight on age and preganant. Hence, this component roughly corresponds to the individual natural feature. 
+
+Else we see triceps, pedigree/insulin, mass are highly correlated, pressure/glucose is highly correlated, age and preganant is highly correlated.
+
+```{r}
+library(FactoMineR)
+PCA(rawdata[train,c(1:8)])$var$contrib
+```
+
